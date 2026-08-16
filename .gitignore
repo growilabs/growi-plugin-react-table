@@ -1,1 +1,43 @@
+# local settings (was already here before the plugin was scaffolded)
 *.local.json
+
+# dependencies
+node_modules
+
+# testing
+coverage
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
+/e2e/.auth
+
+# NOTE: dist/ is intentionally NOT ignored.
+# GROWI installs a plugin by extracting the repository as-is and never builds it,
+# so the built assets must be committed. See README.md.
+
+# misc
+.DS_Store
+*.pem
+.Trash-*
+ehthumbs.db
+Thumbs.db
+
+# debug
+npm-debug.log*
+pnpm-debug.log*
+
+# local env files
+.env.local
+.env.*.local
+
+# typescript
+*.tsbuildinfo
+
+# IDE
+.idea
+*.orig
+*.code-workspace
+
+# pnpm
+.pnpm-store

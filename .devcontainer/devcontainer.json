@@ -7,42 +7,26 @@
     "vscode": {
       "extensions": [
         "editorconfig.editorconfig",
+        // lint + format are both handled by Biome. No ESLint / Prettier / stylelint here.
+        "biomejs.biome",
         // useful for Git and Github
         "eamodio.gitlens",
         "mhutchie.git-graph",
         "github.vscode-pull-request-github",
-        "esbenp.prettier-vscode",
-        "dbaeumer.vscode-eslint"
+        "ms-playwright.playwright"
       ],
       "settings": {
         "files.encoding": "utf8",
         "files.eol": "\n",
         "files.insertFinalNewline": true,
         "files.trimTrailingWhitespace": true,
-        "eslint.workingDirectories": [
-          {
-            "mode": "auto"
-          }
-        ],
-        // use vscode-stylelint
-        // see https://github.com/stylelint/vscode-stylelint
-        "stylelint.validate": [
-          "css",
-          "less",
-          "scss"
-        ],
-        "stylelint.ignoreDisables": true,
-        "css.validate": false,
-        "less.validate": false,
-        "scss.validate": false,
         "editor.tabSize": 2,
         "editor.indentSize": "tabSize",
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.defaultFormatter": "biomejs.biome",
         "editor.formatOnSave": true,
         "editor.codeActionsOnSave": {
-          "source.fixAll.eslint": true,
-          "source.fixAll.markdownlint": true,
-          "source.fixAll.stylelint": true
+          "quickfix.biome": "explicit",
+          "source.organizeImports.biome": "explicit"
         },
         "[markdown]": {
           "files.insertFinalNewline": false,

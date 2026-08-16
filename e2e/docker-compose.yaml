@@ -1,0 +1,71 @@
+# A real GROWI to run the integration tests against.
+#
+# The plugin is installed the same way GROWI installs one, minus the GitHub download:
+# GROWI's install() only extracts an archive into PLUGIN_STORING_PATH and writes one
+# document to the `growiplugins` collection. Here the extraction is a bind mount
+# (see `volumes` below) and the document is written by ./seed-plugin.sh.
+#
+#   docker compose -f e2e/docker-compose.yaml up -d
+#   ./e2e/seed-plugin.sh
+#   pnpm e2e
+#   docker compose -f e2e/docker-compose.yaml down -v
+#
+# No restart is needed after seeding: _document.page.tsx calls
+# retrieveAllPluginResourceEntries() on every request.
+
+services:
+  mongo:
+    image: mongo:8.2
+    # GROWI v8 uses MongoDB change streams, which do not exist on a standalone
+    # server. A single-node replica set is enough.
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    healthcheck:
+      # Initiate the set on first boot (a no-op afterwards), then report healthy only
+      # once this node is actually PRIMARY — otherwise GROWI starts against a set that
+      # cannot accept writes yet.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status() } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }) }
+          db.hello().isWritablePrimary || quit(1)
+        "
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
+
+  growi:
+    # The official images moved from `weseek/growi` (stale at 7.4.2) to
+    # `growilabs/growi`. The tag is pinned on purpose: when a test starts failing we
+    # need to know whether the plugin changed or GROWI did.
+    image: growilabs/growi:8.0.1
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    environment:
+      MONGO_URI: mongodb://mongo:27017/growi?replicaSet=rs0
+      APP_SITE_URL: http://localhost:3000
+      PASSWORD_SEED: e2e-password-seed
+      FILE_UPLOAD: local
+      # Pass the installer automatically so the suite starts from a usable wiki.
+      AUTO_INSTALL_ADMIN_USERNAME: admin
+      AUTO_INSTALL_ADMIN_NAME: Admin
+      AUTO_INSTALL_ADMIN_EMAIL: admin@example.com
+      AUTO_INSTALL_ADMIN_PASSWORD: e2e-admin-password
+      AUTO_INSTALL_GLOBAL_LANG: en_US
+      # Lets the guest-view spec read pages without logging in.
+      AUTO_INSTALL_ALLOW_GUEST_MODE: 'true'
+    volumes:
+      # PLUGIN_STORING_PATH is `<cwd>/tmp/plugins`, and the image's working directory
+      # is /opt/growi/apps/app. Only the files GROWI actually reads are mounted, so
+      # node_modules never enters the container.
+      #
+      # Safe as read-only: the entrypoint chowns /data/uploads and /tmp/page-bulk-export,
+      # never tmp/plugins.
+      - ../dist:/opt/growi/apps/app/tmp/plugins/growilabs/growi-plugin-react-table/dist:ro
+      - ../package.json:/opt/growi/apps/app/tmp/plugins/growilabs/growi-plugin-react-table/package.json:ro
+      - growi_data:/data
+
+volumes:
+  growi_data:

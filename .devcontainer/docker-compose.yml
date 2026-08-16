@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   node:
     user: node
@@ -13,5 +12,79 @@ services:
 
     tty: true
 
+  # ---------------------------------------------------------------------------
+  # GROWI for the integration tests (e2e/).
+  #
+  # These are behind the `e2e` profile so opening the devcontainer does not
+  # start them. Bring them up from the *host*:
+  #
+  #   docker compose -f .devcontainer/docker-compose.yml --profile e2e up -d
+  #
+  # Then, from inside the devcontainer:
+  #
+  #   E2E_BASE_URL=http://growi:3000 pnpm e2e
+  #
+  # The container itself has no docker CLI on purpose; running the stack as
+  # sibling services keeps every bind-mount path resolved by the same daemon
+  # that already mounts the workspace.
+  # ---------------------------------------------------------------------------
+  mongo:
+    profiles: ['e2e']
+    image: mongo:8.2
+    # GROWI v8 uses MongoDB change streams, which need a replica set.
+    # A single-node set is enough.
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    healthcheck:
+      # Initiate the set on first boot (no-op afterwards), then report healthy
+      # only once this node is actually PRIMARY.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status() } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }) }
+          db.hello().isWritablePrimary || quit(1)
+        "
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 20s
+    volumes:
+      - mongo_db:/data/db
+      - mongo_configdb:/data/configdb
+
+  growi:
+    profiles: ['e2e']
+    # The official images moved from `weseek/growi` to `growilabs/growi`.
+    # Pin the tag: a GROWI upgrade must be a deliberate change, not a surprise.
+    image: growilabs/growi:8.0.1
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    environment:
+      MONGO_URI: mongodb://mongo:27017/growi?replicaSet=rs0
+      # Reachable both from the host (localhost:3000) and from the devcontainer
+      # (growi:3000). CertifyOrigin accepts either, because it also compares
+      # against the runtime origin of the request.
+      APP_SITE_URL: http://localhost:3000
+      PASSWORD_SEED: e2e-password-seed
+      FILE_UPLOAD: local
+      # Skip the installer screen.
+      AUTO_INSTALL_ADMIN_USERNAME: admin
+      AUTO_INSTALL_ADMIN_NAME: Admin
+      AUTO_INSTALL_ADMIN_EMAIL: admin@example.com
+      AUTO_INSTALL_ADMIN_PASSWORD: e2e-admin-password
+      AUTO_INSTALL_GLOBAL_LANG: en_US
+      AUTO_INSTALL_ALLOW_GUEST_MODE: 'true'
+    volumes:
+      # PLUGIN_STORING_PATH is `<cwd>/tmp/plugins` and the image's cwd is
+      # /opt/growi/apps/app. Mount only the files GROWI reads; node_modules
+      # stays out of the container.
+      - ../dist:/opt/growi/apps/app/tmp/plugins/growilabs/growi-plugin-react-table/dist:ro
+      - ../package.json:/opt/growi/apps/app/tmp/plugins/growilabs/growi-plugin-react-table/package.json:ro
+      - growi_data:/data
+
 volumes:
   node_modules:
+  mongo_db:
+  mongo_configdb:
+  growi_data:

@@ -1,0 +1,104 @@
+name: CI
+
+on: push
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # GROWI installs a plugin by extracting the repository; it never builds.
+      # A stale dist/ therefore ships stale behaviour to every user.
+      - name: dist/ is up to date
+        run: git diff --exit-code
+
+      # The plugin borrows GROWI's React (see src/growi-react). If a copy ever ends up
+      # in the bundle, hooks break at runtime with no build-time symptom.
+      - name: bundle carries no React of its own
+        run: |
+          if grep -rq 'Minified React error' dist/assets/*.js; then
+            echo '::error::React was bundled into the plugin; check vite/growi-react-resolver.ts'
+            exit 1
+          fi
+
+      # GROWI interpolates manifest['client-entry.tsx'].css — an array — straight into
+      # an href, so a second CSS chunk would produce "a.css,b.css" and 404.
+      - name: manifest emits at most one stylesheet
+        run: |
+          count=$(jq '(.["client-entry.tsx"].css // []) | length' dist/.vite/manifest.json)
+          echo "css chunks: $count"
+          [ "$count" -le 1 ]
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+
+  e2e:
+    # Runs the plugin inside a real GROWI. Slower than the mock suite by a couple of
+    # minutes, so it is a separate job rather than part of `test`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+
+      # Build rather than trusting the committed dist/, so a broken commit cannot make
+      # the integration tests pass against older assets.
+      - run: pnpm build
+
+      - name: start GROWI
+        run: docker compose -f e2e/docker-compose.yaml up -d
+      - name: register the plugin
+        run: ./e2e/seed-plugin.sh
+      - run: pnpm e2e
+
+      - name: GROWI logs
+        if: failure()
+        run: docker compose -f e2e/docker-compose.yaml logs --no-color growi
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-e2e
+          path: playwright-report-e2e/
+      - name: stop GROWI
+        if: always()
+        run: docker compose -f e2e/docker-compose.yaml down -v

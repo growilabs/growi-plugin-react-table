@@ -1,0 +1,65 @@
+{
+  "name": "growi-plugin-react-table",
+  "version": "1.0.0",
+  "description": "GROWI plugin that adds sorting, filtering and other TanStack Table features to tables on a page.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/growilabs/growi-plugin-react-table.git"
+  },
+  "keywords": [
+    "growi",
+    "growi-plugin",
+    "tanstack-table",
+    "react-table"
+  ],
+  "author": "ryu@weseek.co.jp",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/growilabs/growi-plugin-react-table/issues"
+  },
+  "homepage": "https://github.com/growilabs/growi-plugin-react-table#readme",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "playwright test",
+    "test:report": "playwright show-report",
+    "e2e": "playwright test --config playwright.e2e.config.ts",
+    "e2e:up": "docker compose -f e2e/docker-compose.yaml up -d && ./e2e/seed-plugin.sh",
+    "e2e:down": "docker compose -f e2e/docker-compose.yaml down -v"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "^9.1.2",
+    "mathjs": "^15.2.0",
+    "unist-util-visit": "^5.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
+    "@playwright/test": "^1.62.1",
+    "@types/hast": "^3.0.5",
+    "@types/node": "^26.2.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "rehype-parse": "^9.0.1",
+    "rehype-react": "^8.0.0",
+    "typescript": "^5.9.3",
+    "unified": "^11.0.5",
+    "vite": "^8.2.1"
+  },
+  "growiPlugin": {
+    "schemaVersion": "4",
+    "types": [
+      "script"
+    ]
+  },
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=24"
+  }
+}
