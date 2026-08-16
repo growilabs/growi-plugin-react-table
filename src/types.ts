@@ -26,16 +26,25 @@ export type RendererOptions = {
   components?: Record<string, unknown>;
 };
 
-type OptionsGenerator = (...args: unknown[]) => RendererOptions;
+export type OptionsGenerator = (...args: unknown[]) => RendererOptions;
+
+/**
+ * Where GROWI keeps the renderer options builders a plugin may override.
+ *
+ * The `custom*` slots are the plugin-facing ones: GROWI calls them in preference to its
+ * own `generate*` when they are set, which is how a plugin gets a say in the options
+ * without GROWI knowing about it.
+ */
+export type OptionsGenerators = {
+  generateViewOptions?: OptionsGenerator;
+  customGenerateViewOptions?: OptionsGenerator;
+  generatePreviewOptions?: OptionsGenerator;
+  customGeneratePreviewOptions?: OptionsGenerator;
+};
 
 export type GrowiFacade = {
   markdownRenderer?: {
-    optionsGenerators?: {
-      generateViewOptions?: OptionsGenerator;
-      customGenerateViewOptions?: OptionsGenerator;
-      generatePreviewOptions?: OptionsGenerator;
-      customGeneratePreviewOptions?: OptionsGenerator;
-    };
+    optionsGenerators?: OptionsGenerators;
   };
   react?: unknown;
 };

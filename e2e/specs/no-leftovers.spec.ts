@@ -58,6 +58,61 @@ const expectSingleAssetTags = async (page: Page) => {
  */
 const sidebarLink = (page: Page, fixture: Fixture) => page.getByRole('tree').getByRole('link', { name: fixture.path.split('/').pop()!, exact: true });
 
+/** Chain lengths seen for each generator the plugin wraps, keyed by the slot they were recorded under. */
+type ChainLengths = { view: number[]; preview: number[] };
+
+type SpiedWindow = {
+  growiFacade: {
+    markdownRenderer: { optionsGenerators: Record<string, ((...args: unknown[]) => { rehypePlugins?: unknown[] }) | undefined> };
+  };
+  __chainLengths: Record<string, ChainLengths>;
+};
+
+/**
+ * Starts counting the rehype chain GROWI hands back, under the name `slot`.
+ *
+ * Passive on purpose: the generators take a config this test has no way to build, so it
+ * waits for GROWI to call them rather than calling them itself.
+ *
+ * Each call wraps whatever is *currently* outermost, which is what makes it usable twice
+ * in one test — measure, re-activate the plugin, measure again, compare.
+ */
+const startCountingChains = (page: Page, slot: string): Promise<void> =>
+  page.evaluate((slotName) => {
+    const spied = window as unknown as SpiedWindow;
+    const generators = spied.growiFacade.markdownRenderer.optionsGenerators;
+
+    spied.__chainLengths ??= {};
+    spied.__chainLengths[slotName] = { view: [], preview: [] };
+
+    for (const [label, key] of [
+      ['view', 'customGenerateViewOptions'],
+      ['preview', 'customGeneratePreviewOptions'],
+    ] as const) {
+      const inner = generators[key];
+      if (inner == null) {
+        continue;
+      }
+      generators[key] = (...args: unknown[]) => {
+        const options = inner(...args);
+        spied.__chainLengths[slotName]![label].push((options.rehypePlugins ?? []).length);
+        return options;
+      };
+    }
+  }, slot);
+
+const readChainLengths = (page: Page, slot: string): Promise<ChainLengths> =>
+  page.evaluate((slotName) => (window as unknown as SpiedWindow).__chainLengths[slotName]!, slot);
+
+/** One round trip through the page tree, which re-invokes the view generator twice. */
+const navigateAwayAndBack = async (page: Page): Promise<void> => {
+  await sidebarLink(page, RICH_CELL_PAGE).click();
+  await expect(page.getByRole('heading', { name: 'Rich cells' })).toBeVisible();
+
+  await sidebarLink(page, BASIC_TABLE_PAGE).click();
+  await expect(page.getByRole('heading', { name: 'Basic table' })).toBeVisible();
+};
+
 test.describe('繰り返しレンダリングしても残骸が出ない', () => {
   test('ページ間を SPA 遷移で往復しても二重にならない', async ({ page, consoleErrors }) => {
     await page.goto(BASIC_TABLE_PAGE.path);
@@ -135,43 +190,12 @@ test.describe('繰り返しレンダリングしても残骸が出ない', () =>
      *   - that the length is *constant*, not some literal: the baseline moves with GROWI's
      *     own plugin list, and pinning it would turn a version bump into a failure
      *
-     * The blind spot: a second `activate()` wraps whatever is currently registered, so it
-     * would land outside this spy and read as a stable (higher) number. That costs a
-     * one-time +1 rather than per-render growth — real, but not what this test watches.
+     * Re-activation is covered separately, by the test below.
      */
-    await page.evaluate(() => {
-      type Options = { rehypePlugins?: unknown[] };
-      type Generators = Record<string, ((...args: unknown[]) => Options) | undefined>;
-      const spiedWindow = window as unknown as {
-        growiFacade: { markdownRenderer: { optionsGenerators: Generators } };
-        __rehypeCounts: { view: number[]; preview: number[] };
-      };
-
-      const generators = spiedWindow.growiFacade.markdownRenderer.optionsGenerators;
-      spiedWindow.__rehypeCounts = { view: [], preview: [] };
-
-      for (const [label, key] of [
-        ['view', 'customGenerateViewOptions'],
-        ['preview', 'customGeneratePreviewOptions'],
-      ] as const) {
-        const inner = generators[key];
-        if (inner == null) {
-          continue;
-        }
-        generators[key] = (...args: unknown[]) => {
-          const options = inner(...args);
-          spiedWindow.__rehypeCounts[label].push((options.rehypePlugins ?? []).length);
-          return options;
-        };
-      }
-    });
+    await startCountingChains(page, 'renders');
 
     for (let round = 0; round < 3; round++) {
-      await sidebarLink(page, RICH_CELL_PAGE).click();
-      await expect(page.getByRole('heading', { name: 'Rich cells' })).toBeVisible();
-
-      await sidebarLink(page, BASIC_TABLE_PAGE).click();
-      await expect(page.getByRole('heading', { name: 'Basic table' })).toBeVisible();
+      await navigateAwayAndBack(page);
     }
 
     // Bring the preview generator into play as well.
@@ -180,7 +204,7 @@ test.describe('繰り返しレンダリングしても残骸が出ない', () =>
     await page.getByRole('button', { name: 'play_arrow View' }).click();
     await expect(page.locator('.page-editor-preview-container')).toBeHidden();
 
-    const counts = await page.evaluate(() => (window as unknown as { __rehypeCounts: { view: number[]; preview: number[] } }).__rehypeCounts);
+    const counts = await readChainLengths(page, 'renders');
 
     // Both wrapped generators must have actually run, or this test asserts nothing.
     expect(counts.view.length, 'the view generator was never re-invoked — the spy proved nothing').toBeGreaterThan(1);
@@ -189,6 +213,51 @@ test.describe('繰り返しレンダリングしても残骸が出ない', () =>
     for (const [label, samples] of Object.entries(counts)) {
       expect(new Set(samples).size, `the ${label} rehype chain grew: ${samples.join(' → ')}`).toBe(1);
     }
+
+    expectNoReactFailures(consoleErrors);
+  });
+
+  test('プラグインが二重に活性化されても増えない', async ({ page, consoleErrors }) => {
+    await page.goto(BASIC_TABLE_PAGE.path);
+    await expect(page.locator('[data-growi-plugin-react-table="active"]')).toBeVisible();
+
+    /*
+     * `activate()` wraps whatever generator is registered at the time, so on its own a
+     * second call stacks a second wrapper and `applyTo` runs twice per render, for good.
+     * client-entry.tsx guards that by recording which slots it has already installed into,
+     * on the generators object itself.
+     *
+     * This is the one leak the DOM cannot show *and* the previous test cannot show: a
+     * re-activation lands outside a spy installed earlier, so it reads as a stable — but
+     * permanently higher — number. Hence measuring twice, with the spy reinstalled in
+     * between so it sits outside the new wrapper, and comparing.
+     *
+     * Without the guard this fails with 12 → 14 (one extra `calcTable` per extra call).
+     */
+    await startCountingChains(page, 'before');
+    await navigateAwayAndBack(page);
+
+    await page.evaluate(() => {
+      const activator = (window as unknown as { pluginActivators: Record<string, { activate: () => void }> }).pluginActivators['growi-plugin-react-table']!;
+      activator.activate();
+      activator.activate();
+      activator.activate();
+    });
+
+    await startCountingChains(page, 'after');
+    await navigateAwayAndBack(page);
+
+    const before = await readChainLengths(page, 'before');
+    const after = await readChainLengths(page, 'after');
+
+    expect(before.view.length, 'nothing was measured before re-activating').toBeGreaterThan(0);
+    expect(after.view.length, 'nothing was measured after re-activating').toBeGreaterThan(0);
+    expect(new Set(after.view), `re-activating grew the chain: ${before.view.join(' → ')} then ${after.view.join(' → ')}`).toEqual(new Set(before.view));
+
+    // The table is still the plugin's, not just the right size.
+    const nameHeader = page.locator('thead th', { hasText: 'Name' }).first();
+    await nameHeader.getByRole('button').click();
+    await expect(page.locator('table tbody tr td:first-child').first()).toHaveText('Anaconda');
 
     expectNoReactFailures(consoleErrors);
   });
