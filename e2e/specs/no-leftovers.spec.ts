@@ -107,19 +107,27 @@ test.describe('繰り返しレンダリングしても残骸が出ない', () =>
     expectNoReactFailures(consoleErrors);
   });
 
-  test('レンダラに登録されるフックはページを移っても増えない', async ({ page, consoleErrors }) => {
+  test('レンダラに登録されるフックは遷移とモード変更で増えない', async ({ page, consoleErrors }) => {
     await page.goto(BASIC_TABLE_PAGE.path);
     await expect(page.locator('[data-growi-plugin-react-table="active"]')).toBeVisible();
 
     /*
      * `applyTo` pushes onto `options.rehypePlugins` in place. That is safe only because
-     * GROWI builds a fresh options object per render; if it ever memoized one, every
-     * render would add another `calcTable` to the same array. Verified to bite: stubbing
-     * the base generator to return a cached object makes this assertion fail with the
-     * chain growing 12 → 13 → 14 → 15, while every DOM count above stays clean.
+     * GROWI hands it a fresh options object; if it ever memoized one, every render would
+     * add another `calcTable` to the same array. Verified to bite: stubbing the base
+     * generator to return a cached object makes this assertion fail with the chain
+     * growing 12 → 13 → 14 → 15, while every DOM count above stays clean.
      *
-     * Observed passively — the generator takes a config this test has no way to build, so
-     * it waits for GROWI to call it rather than calling it itself.
+     * Observed passively — the generators take a config this test has no way to build, so
+     * it waits for GROWI to call them rather than calling them itself.
+     *
+     * Both generators the plugin wraps are watched, because they are re-invoked on very
+     * different schedules and only measuring showed which:
+     *   - view: once per client-side navigation, so page hopping samples it repeatedly
+     *   - preview: once per page load. Re-entering edit mode does not re-invoke it, and
+     *     neither does typing — GROWI reuses the options object for every preview
+     *     re-render. That reuse is exactly why a non-idempotent applyTo would be
+     *     dangerous here, and exactly why this path cannot drift on its own.
      *
      * Two deliberate choices about what is asserted:
      *   - the *length* of the chain, not plugin names: the bundle is minified, so
@@ -133,19 +141,29 @@ test.describe('繰り返しレンダリングしても残骸が出ない', () =>
      */
     await page.evaluate(() => {
       type Options = { rehypePlugins?: unknown[] };
+      type Generators = Record<string, ((...args: unknown[]) => Options) | undefined>;
       const spiedWindow = window as unknown as {
-        growiFacade: { markdownRenderer: { optionsGenerators: { customGenerateViewOptions: (...args: unknown[]) => Options } } };
-        __rehypeCounts: number[];
+        growiFacade: { markdownRenderer: { optionsGenerators: Generators } };
+        __rehypeCounts: { view: number[]; preview: number[] };
       };
 
       const generators = spiedWindow.growiFacade.markdownRenderer.optionsGenerators;
-      const inner = generators.customGenerateViewOptions;
-      spiedWindow.__rehypeCounts = [];
-      generators.customGenerateViewOptions = (...args: unknown[]) => {
-        const options = inner(...args);
-        spiedWindow.__rehypeCounts.push((options.rehypePlugins ?? []).length);
-        return options;
-      };
+      spiedWindow.__rehypeCounts = { view: [], preview: [] };
+
+      for (const [label, key] of [
+        ['view', 'customGenerateViewOptions'],
+        ['preview', 'customGeneratePreviewOptions'],
+      ] as const) {
+        const inner = generators[key];
+        if (inner == null) {
+          continue;
+        }
+        generators[key] = (...args: unknown[]) => {
+          const options = inner(...args);
+          spiedWindow.__rehypeCounts[label].push((options.rehypePlugins ?? []).length);
+          return options;
+        };
+      }
     });
 
     for (let round = 0; round < 3; round++) {
@@ -156,10 +174,21 @@ test.describe('繰り返しレンダリングしても残骸が出ない', () =>
       await expect(page.getByRole('heading', { name: 'Basic table' })).toBeVisible();
     }
 
-    const counts = await page.evaluate(() => (window as unknown as { __rehypeCounts: number[] }).__rehypeCounts);
+    // Bring the preview generator into play as well.
+    await page.getByRole('button', { name: 'edit_square Edit' }).click();
+    await expect(page.locator('.page-editor-preview-container [data-growi-plugin-react-table="active"]')).toBeVisible();
+    await page.getByRole('button', { name: 'play_arrow View' }).click();
+    await expect(page.locator('.page-editor-preview-container')).toBeHidden();
 
-    expect(counts.length, 'GROWI never re-generated options — the spy proved nothing').toBeGreaterThan(1);
-    expect(new Set(counts).size, `the rehype chain grew across renders: ${counts.join(' → ')}`).toBe(1);
+    const counts = await page.evaluate(() => (window as unknown as { __rehypeCounts: { view: number[]; preview: number[] } }).__rehypeCounts);
+
+    // Both wrapped generators must have actually run, or this test asserts nothing.
+    expect(counts.view.length, 'the view generator was never re-invoked — the spy proved nothing').toBeGreaterThan(1);
+    expect(counts.preview.length, 'the preview generator never ran — edit mode did not exercise it').toBeGreaterThan(0);
+
+    for (const [label, samples] of Object.entries(counts)) {
+      expect(new Set(samples).size, `the ${label} rehype chain grew: ${samples.join(' → ')}`).toBe(1);
+    }
 
     expectNoReactFailures(consoleErrors);
   });
