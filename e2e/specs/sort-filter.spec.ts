@@ -36,7 +36,11 @@ test.describe('実ページ上のソートとフィルタ', () => {
     await page.goto(BASIC_TABLE_PAGE.path);
     await expect(page.locator('[data-growi-plugin-react-table="active"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Search' }).click();
+    /*
+     * `getByRole('button', { name: 'Search' })` alone also matches GROWI's own nav
+     * search button, so scope to the plugin's toolbar.
+     */
+    await page.getByRole('toolbar', { name: 'Table controls' }).getByRole('button', { name: 'Search' }).click();
     await page.getByRole('searchbox', { name: 'Search this table' }).fill('carnivore');
 
     expect(await namesIn(page)).toEqual(['Anaconda', 'Meerkat']);

@@ -289,6 +289,17 @@
   position: relative;
 }
 
+/*
+ * GROWI draws its "edit this table" button absolutely positioned over the table's
+ * top-right corner, at z-index:auto. Against the plugin's enhanced header, it loses the
+ * hit test at its own center — even while visible and hovered, clicks land on the
+ * plugin's header content instead. An explicit z-index restores it, without touching
+ * GROWI's own stylesheet.
+ */
+.growi-plugin-react-table .editable-with-handsontable .handsontable-modal-trigger {
+  z-index: 1;
+}
+
 .growi-plugin-react-table .grt-resizer {
   position: absolute;
   top: 0;

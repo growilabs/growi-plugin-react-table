@@ -8,13 +8,18 @@ import { expect, expectNoReactFailures, test } from '../test.ts';
  *
  * The round trip matters too. GROWI keeps the view mounted and merely hides it while
  * editing, which is what broke growi-plugin-datatables: it had rehomed the table's DOM
- * node, so React could no longer insert siblings around it.
+ * node, so React could no longer insert siblings around it. That mounted view is why
+ * `#edit` has two `[data-growi-plugin-react-table="active"]` nodes at once — the hidden
+ * view and the visible preview — so tests scope to `.page-editor-preview-container`
+ * rather than relying on DOM order via `.first()`.
  */
+const previewTable = (page: import('@playwright/test').Page) => page.locator('.page-editor-preview-container [data-growi-plugin-react-table="active"]');
+
 test.describe('編集モード', () => {
   test('プレビューでも表が描画される', async ({ page, consoleErrors }) => {
     await page.goto(`${BASIC_TABLE_PAGE.path}#edit`);
 
-    const preview = page.locator('[data-growi-plugin-react-table="active"]').first();
+    const preview = previewTable(page);
     await expect(preview).toBeVisible({ timeout: 30_000 });
     await expect(preview.getByRole('table')).toBeVisible();
 
@@ -26,7 +31,7 @@ test.describe('編集モード', () => {
     await expect(page.locator('[data-growi-plugin-react-table="active"]').first()).toBeVisible();
 
     await page.goto(`${BASIC_TABLE_PAGE.path}#edit`);
-    await expect(page.locator('[data-growi-plugin-react-table="active"]').first()).toBeVisible({ timeout: 30_000 });
+    await expect(previewTable(page)).toBeVisible({ timeout: 30_000 });
 
     await page.goto(BASIC_TABLE_PAGE.path);
     await expect(page.locator('[data-growi-plugin-react-table="active"]').first()).toBeVisible();

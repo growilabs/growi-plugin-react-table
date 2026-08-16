@@ -6,11 +6,15 @@ test.describe('実ページ上の計算記法', () => {
     await page.goto(CALC_PAGE.path);
     await expect(page.getByRole('table')).toBeVisible();
 
-    const grid = await page
-      .locator('table tbody tr')
-      .evaluateAll((rows) => rows.map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent?.trim() ?? '')));
+    const readGrid = () =>
+      page.locator('table tbody tr').evaluateAll((rows) => rows.map((row) => [...row.querySelectorAll('td')].map((cell) => cell.textContent?.trim() ?? '')));
 
-    expect(grid).toEqual([
+    /*
+     * GROWI paints the server-rendered markup — the raw `{hsum}` notation, unresolved —
+     * before client hydration swaps in the plugin's computed values. `toEqual` does not
+     * retry, so a one-shot read races that swap; poll instead.
+     */
+    await expect.poll(readGrid).toEqual([
       ['7', '13', '20'],
       ['15', '1', '8'],
       ['22', '13', ''],
