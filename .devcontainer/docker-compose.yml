@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  node:
+    user: node
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    volumes:
+      - ..:/workspace/growi-plugin-react-table:delegated
+      - node_modules:/workspace/growi-plugin-react-table/node_modules
+
+    tty: true
+
+volumes:
+  node_modules:
